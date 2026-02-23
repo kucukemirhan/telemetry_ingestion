@@ -1,8 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using telemetry_ingestion.Controllers;
 
 #region Interface
 
@@ -62,10 +65,11 @@ public class TelemetryService
 
     public TelemetryService(IEnumerable<ITelemetryParser> parsers)
     {
+        Console.WriteLine("TelemetryService created");
         _parsers = parsers.ToDictionary(p => p.MessageType);
     }
 
-    public async Task ProcessAsync(string hexFrame, CancellationToken ct)
+    public async Task<string> ProcessAsync(string hexFrame, CancellationToken ct)
     {
         try
         {
@@ -79,15 +83,13 @@ public class TelemetryService
             }
             catch
             {
-                Console.WriteLine($"Invalid HEX frame: {hexFrame}");
-                return;
+                throw;
             }
 
             // Frame validation
             if (frame.Length < 4)
             {
-                Console.WriteLine("Frame too short");
-                return;
+                throw new ArgumentException("Frame too short");
             }
 
             byte deviceId = frame[1];
@@ -96,8 +98,7 @@ public class TelemetryService
 
             if (frame.Length < 4 + payloadLength)
             {
-                Console.WriteLine($"Payload length mismatch for device {deviceId}");
-                return;
+                throw new ArgumentException($"Payload length mismatch for device {deviceId}");
             }
 
             byte[] payload = frame.Skip(4)
@@ -106,131 +107,97 @@ public class TelemetryService
 
             if (!_parsers.TryGetValue(messageType, out var parser))
             {
-                Console.WriteLine($"Unknown message type {messageType}");
-                return;
+                throw new ArgumentException($"Unknown message type {messageType}");
             }
 
             string parsed = parser.Parse(payload);
 
-            Console.WriteLine(
-                $"Device:{deviceId} | Type:{messageType} | {parsed}"
-            );
+            return $"Device:{deviceId} | Type:{messageType} | {parsed}";
         }
         catch (OperationCanceledException)
         {
-            Console.WriteLine("Processing cancelled.");
+            throw;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Unexpected error: {ex.Message}");
+            throw;
         }
     }
 }
 
 #endregion
 
-#region Frame Generator
-
-public static class IndustrialFrameGenerator
-{
-    public static string GenerateFrame(int deviceId)
-    {
-        Random rnd = Random.Shared;
-
-        byte start = 0xAA;
-        byte messageType = (byte)rnd.Next(1, 4);
-
-        byte[] payload = messageType switch
-        {
-            1 => new byte[]
-            {
-                (byte)rnd.Next(20, 80),
-                (byte)rnd.Next(0, 2)
-            },
-            2 => new byte[]
-            {
-                (byte)rnd.Next(0, 150),
-                (byte)rnd.Next(0, 2)
-            },
-            3 => new byte[]
-            {
-                (byte)rnd.Next(0, 100),
-                (byte)rnd.Next(0, 200)
-            },
-            _ => Array.Empty<byte>()
-        };
-
-        byte payloadLength = (byte)payload.Length;
-
-        var frame = new List<byte>
-        {
-            start,
-            (byte)deviceId,
-            messageType,
-            payloadLength
-        };
-
-        frame.AddRange(payload);
-
-        return Convert.ToHexString(frame.ToArray());
-    }
-}
-
-#endregion
-
-#region Program
+#region Program (HTTP Server)
 
 class Program
 {
     static async Task Main()
     {
-        // Dependency creation
+        // DI
         var parsers = new List<ITelemetryParser>
         {
             new TemperatureParser(),
             new SpeedParser(),
             new VibrationParser()
         };
-
         var service = new TelemetryService(parsers);
+        var controller = new TelemetryController(service);
 
-        // Cancellation control
-        using var cts = new CancellationTokenSource();
+        // HTTP listener
+        var listener = new HttpListener();
+        listener.Prefixes.Add("http://localhost:5000/");
+        listener.Start();
+        Console.WriteLine("Listening on http://localhost:5000/ ...");
 
-        Console.CancelKeyPress += (s, e) =>
+        while (true)
         {
-            Console.WriteLine("Stopping...");
-            cts.Cancel();
-            e.Cancel = true;
-        };
-
-        // Device simulation
-        var tasks = new List<Task>();
-
-        for (int deviceId = 1; deviceId <= 5; deviceId++)
-        {
-            int capturedId = deviceId;
-
-            tasks.Add(Task.Run(async () =>
-            {
-                while (!cts.Token.IsCancellationRequested)
-                {
-                    string frame = IndustrialFrameGenerator.GenerateFrame(capturedId);
-
-                    await service.ProcessAsync(frame, cts.Token);
-
-                    await Task.Delay(1000, cts.Token);
-                }
-            }));
+            var context = await listener.GetContextAsync();
+            _ = Task.Run(() => HandleRequest(context, controller));
         }
+    }
+
+    static async Task HandleRequest(HttpListenerContext context, TelemetryController controller)
+    {
+        var request = context.Request;
+        var response = context.Response;
+
+        string result = "";
 
         try
         {
-            await Task.WhenAll(tasks);
+            if (request.Url.AbsolutePath == "/api/telemetry" && request.HttpMethod == "POST")
+            {
+                using var reader = new StreamReader(request.InputStream);
+                var body = await reader.ReadToEndAsync();
+                result = await controller.Process(body);
+                response.StatusCode = 200;
+            }
+            else if (request.Url.AbsolutePath == "/api/telemetry/ping" && request.HttpMethod == "GET")
+            {
+                result = controller.Ping();
+                response.StatusCode = 200;
+            }
+            else
+            {
+                result = "Not Found";
+                response.StatusCode = 404;
+            }
+
+            var buffer = Encoding.UTF8.GetBytes(result);
+            response.ContentType = "text/plain";
+            response.ContentLength64 = buffer.Length;
+            await response.OutputStream.WriteAsync(buffer);
         }
-        catch (OperationCanceledException)
+        catch (Exception ex)
         {
-            Console.WriteLine("Application shutting down...");
+            var buffer = Encoding.UTF8.GetBytes($"Error: {ex.Message}");
+            response.StatusCode = 500;
+            response.ContentLength64 = buffer.Length;
+            await response.OutputStream.WriteAsync(buffer);
+        }
+        finally
+        {
+            response.OutputStream.Close();
         }
     }
 }
