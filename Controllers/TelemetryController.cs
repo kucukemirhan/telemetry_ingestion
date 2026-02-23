@@ -4,20 +4,20 @@ namespace telemetry_ingestion.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    public class TelemetryController
+    public class TelemetryController : ControllerBase
     {
         private readonly TelemetryService _service;
+
         public TelemetryController(TelemetryService service)
         {
             _service = service;
         }
-        public async Task<string> Process(string hexFrame)
+
+        [HttpPost]
+        public async Task<IActionResult> Process([FromBody] string hexFrame)
         {
-            return await _service.ProcessAsync(hexFrame, CancellationToken.None);
-        }
-        public string Ping()
-        {
-            return "PONG";
+            var result = await _service.ProcessAsync(hexFrame, HttpContext.RequestAborted);
+            return Ok(result);
         }
     }
 }

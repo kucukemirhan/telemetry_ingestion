@@ -1,11 +1,31 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using telemetry_ingestion.Controllers;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddControllers();
+
+builder.Services.AddScoped<ITelemetryParser, TemperatureParser>();
+builder.Services.AddScoped<ITelemetryParser, SpeedParser>();
+builder.Services.AddScoped<ITelemetryParser, VibrationParser>();
+builder.Services.AddScoped<TelemetryService>();
+
+// swagger
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+app.MapControllers();
+
+// swagger
+app.UseSwagger();
+app.UseSwaggerUI();
+
+app.Run();
 
 #region Interface
 
@@ -121,83 +141,6 @@ public class TelemetryService
         catch (Exception ex)
         {
             throw;
-        }
-    }
-}
-
-#endregion
-
-#region Program (HTTP Server)
-
-class Program
-{
-    static async Task Main()
-    {
-        // DI
-        var parsers = new List<ITelemetryParser>
-        {
-            new TemperatureParser(),
-            new SpeedParser(),
-            new VibrationParser()
-        };
-        var service = new TelemetryService(parsers);
-        var controller = new TelemetryController(service);
-
-        // HTTP listener
-        var listener = new HttpListener();
-        listener.Prefixes.Add("http://localhost:5000/");
-        listener.Start();
-        Console.WriteLine("Listening on http://localhost:5000/ ...");
-
-        while (true)
-        {
-            var context = await listener.GetContextAsync();
-            _ = Task.Run(() => HandleRequest(context, controller));
-        }
-    }
-
-    static async Task HandleRequest(HttpListenerContext context, TelemetryController controller)
-    {
-        var request = context.Request;
-        var response = context.Response;
-
-        string result = "";
-
-        try
-        {
-            if (request.Url.AbsolutePath == "/api/telemetry" && request.HttpMethod == "POST")
-            {
-                using var reader = new StreamReader(request.InputStream);
-                var body = await reader.ReadToEndAsync();
-                result = await controller.Process(body);
-                response.StatusCode = 200;
-            }
-            else if (request.Url.AbsolutePath == "/api/telemetry/ping" && request.HttpMethod == "GET")
-            {
-                result = controller.Ping();
-                response.StatusCode = 200;
-            }
-            else
-            {
-                result = "Not Found";
-                response.StatusCode = 404;
-            }
-
-            var buffer = Encoding.UTF8.GetBytes(result);
-            response.ContentType = "text/plain";
-            response.ContentLength64 = buffer.Length;
-            await response.OutputStream.WriteAsync(buffer);
-        }
-        catch (Exception ex)
-        {
-            var buffer = Encoding.UTF8.GetBytes($"Error: {ex.Message}");
-            response.StatusCode = 500;
-            response.ContentLength64 = buffer.Length;
-            await response.OutputStream.WriteAsync(buffer);
-        }
-        finally
-        {
-            response.OutputStream.Close();
         }
     }
 }
