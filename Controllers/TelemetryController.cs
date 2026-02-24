@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using telemetry_ingestion.Services;
 
 namespace telemetry_ingestion.Controllers
 {
