@@ -23,20 +23,10 @@ namespace telemetry_ingestion.Services
             {
                 await Task.Delay(200, ct); // simulate latency
 
-                byte[] frame;
-
-                try
-                {
-                    frame = Convert.FromHexString(hexFrame);
-                }
-                catch
-                {
-                    throw;
-                }
+                byte[] frame = Convert.FromHexString(hexFrame);
 
                 // Frame validation
-                if (frame.Length < 4)
-                {
+                if (frame.Length < 4) {
                     throw new ArgumentException("Frame too short");
                 }
 
@@ -44,8 +34,7 @@ namespace telemetry_ingestion.Services
                 byte messageType = frame[2];
                 byte payloadLength = frame[3];
 
-                if (frame.Length < 4 + payloadLength)
-                {
+                if (frame.Length < 4 + payloadLength) {
                     throw new ArgumentException($"Payload length mismatch for device {deviceId}");
                 }
 
@@ -53,34 +42,29 @@ namespace telemetry_ingestion.Services
                                       .Take(payloadLength)
                                       .ToArray();
 
-                if (!_parsers.TryGetValue(messageType, out var parser))
-                {
+                if (!_parsers.TryGetValue(messageType, out var parser)) {
                     throw new ArgumentException($"Unknown message type {messageType}");
                 }
 
-                string parsed = parser.Parse(payload);
+                TelemetryRecordBase record = parser.Parse(payload);
 
-                // check if device exists
                 var deviceExists = await _context.Devices
                     .AnyAsync(d => d.Id == deviceId, ct);
 
-                if (!deviceExists)
-                {
+                if (!deviceExists) {
                     throw new ArgumentException($"Device {deviceId} not found.");
                 }
 
-                var record = new TelemetryRecord
-                {
-                    DeviceId = deviceId,
-                    MessageType = messageType,
-                    ParsedData = parsed,
-                    Timestamp = DateTime.UtcNow
-                };
+                record.DeviceId = deviceId;
+                record.MessageType = messageType;
+                record.RawPayload = payload;
+                record.Timestamp = DateTime.UtcNow;
 
-                _context.TelemetryRecords.Add(record);
+                _context.Add(record);
+
                 await _context.SaveChangesAsync(ct);
 
-                return $"Device:{deviceId} | Type:{messageType} | {parsed}";
+                return $"Device:{deviceId} | Type:{messageType} | Saved as {record.GetType().Name}";
             }
             catch (OperationCanceledException)
             {

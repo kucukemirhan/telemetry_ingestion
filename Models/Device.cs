@@ -11,5 +11,5 @@ public class Device
     public string ProtocolType { get; set; } = string.Empty;
 
     // Navigation property
-    public List<TelemetryRecord> TelemetryRecords { get; set; } = new();
+    public List<TelemetryRecordBase> TelemetryRecords { get; set; } = new();
 }

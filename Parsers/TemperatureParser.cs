@@ -1,15 +1,17 @@
 ﻿using telemetry_ingestion.Interfaces;
+using telemetry_ingestion.Models;
 
 namespace telemetry_ingestion.Parsers;
-
 public class TemperatureParser : ITelemetryParser
 {
     public byte MessageType => 1;
 
-    public string Parse(byte[] payload)
+    public TelemetryRecordBase Parse(byte[] payload)
     {
-        int temp = payload[0];
-        bool status = payload[1] == 1;
-        return $"Temperature: {temp}°C | Status:{status}";
+        return new TemperatureRecord
+        {
+            Temperature = payload[0],
+            Status = payload[1] == 1
+        };
     }
 }
