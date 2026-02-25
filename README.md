@@ -12,7 +12,7 @@ Industrial-style telemetry ingestion backend built with:
 Industrial devices send raw hexadecimal telemetry frames. 
 This project receives a hex telemetry frame via HTTP, parses it, and persists it into PostgreSQL.
 
-System flow: Machine -> API -> Parse -> PostgreSQL
+System flow: Machine -> API -> Parse -> Service -> Repository -> PostgreSQL
 
  
 ## Architecture
