@@ -60,6 +60,15 @@ namespace telemetry_ingestion.Services
 
                 string parsed = parser.Parse(payload);
 
+                // check if device exists
+                var deviceExists = await _context.Devices
+                    .AnyAsync(d => d.Id == deviceId, ct);
+
+                if (!deviceExists)
+                {
+                    throw new ArgumentException($"Device {deviceId} not found.");
+                }
+
                 var record = new TelemetryRecord
                 {
                     DeviceId = deviceId,

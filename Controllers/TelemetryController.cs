@@ -17,8 +17,15 @@ namespace telemetry_ingestion.Controllers
         [HttpPost]
         public async Task<IActionResult> Process([FromBody] string hexFrame)
         {
-            var result = await _service.ProcessAsync(hexFrame, HttpContext.RequestAborted);
-            return Ok(result);
+            try
+            {
+                var result = await _service.ProcessAsync(hexFrame, HttpContext.RequestAborted);
+                return Ok(result);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
+            }
         }
     }
 }
