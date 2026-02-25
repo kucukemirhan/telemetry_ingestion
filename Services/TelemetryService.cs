@@ -1,80 +1,49 @@
-﻿using Microsoft.EntityFrameworkCore;
-using telemetry_ingestion.Data;
-using telemetry_ingestion.Interfaces;
+﻿using telemetry_ingestion.Interfaces;
 using telemetry_ingestion.Models;
 
-namespace telemetry_ingestion.Services
+namespace telemetry_ingestion.Services;
+
+public class TelemetryService
 {
-    public class TelemetryService
+    private readonly Dictionary<byte, ITelemetryParser> _parsers;
+    private readonly ITelemetryRepository _repository;
+    private readonly DevicesService _deviceService;
+
+    public TelemetryService(IEnumerable<ITelemetryParser> parsers, ITelemetryRepository repository, DevicesService deviceService)
     {
-        private readonly Dictionary<byte, ITelemetryParser> _parsers;
-        private readonly AppDbContext _context;
+        _parsers = parsers.ToDictionary(p => p.MessageType);
+        _repository = repository;
+        _deviceService = deviceService;
+    }
 
-        public TelemetryService(IEnumerable<ITelemetryParser> parsers, AppDbContext context)
-        {
-            Console.WriteLine("TelemetryService created");
-            _parsers = parsers.ToDictionary(p => p.MessageType);
-            _context = context;
-        }
+    public async Task<string> ProcessAsync(int deviceId, string hexFrame, CancellationToken ct)
+    {
+        byte[] frame = Convert.FromHexString(hexFrame);
 
-        public async Task<string> ProcessAsync(string hexFrame, CancellationToken ct)
-        {
-            try
-            {
-                await Task.Delay(200, ct); // simulate latency
+        if (frame.Length < 3) throw new ArgumentException("Payload too short");
 
-                byte[] frame = Convert.FromHexString(hexFrame);
+        byte messageType = frame[0];
+        byte[] payload = frame.Skip(1).ToArray();
 
-                // Frame validation
-                if (frame.Length < 4) {
-                    throw new ArgumentException("Frame too short");
-                }
+        if (!_parsers.TryGetValue(messageType, out var parser))
+            throw new ArgumentException($"Unknown message type {messageType}");
 
-                byte deviceId = frame[1];
-                byte messageType = frame[2];
-                byte payloadLength = frame[3];
+        TelemetryRecordBase record = parser.Parse(payload);
+        record.DeviceId = deviceId;
+        record.MessageType = messageType;
+        record.Timestamp = DateTime.UtcNow;
+        record.RawPayload = payload;
 
-                if (frame.Length < 4 + payloadLength) {
-                    throw new ArgumentException($"Payload length mismatch for device {deviceId}");
-                }
+        if (!await _deviceService.DeviceExistsAsync(deviceId, ct))
+            throw new ArgumentException($"Device {deviceId} not found.");
 
-                byte[] payload = frame.Skip(4)
-                                      .Take(payloadLength)
-                                      .ToArray();
+        await _repository.AddAsync(record, ct);
 
-                if (!_parsers.TryGetValue(messageType, out var parser)) {
-                    throw new ArgumentException($"Unknown message type {messageType}");
-                }
+        return $"Device:{deviceId} | Type:{messageType} | Saved as {record.GetType().Name}";
+    }
 
-                TelemetryRecordBase record = parser.Parse(payload);
-
-                var deviceExists = await _context.Devices
-                    .AnyAsync(d => d.Id == deviceId, ct);
-
-                if (!deviceExists) {
-                    throw new ArgumentException($"Device {deviceId} not found.");
-                }
-
-                record.DeviceId = deviceId;
-                record.MessageType = messageType;
-                record.RawPayload = payload;
-                record.Timestamp = DateTime.UtcNow;
-
-                _context.Add(record);
-
-                await _context.SaveChangesAsync(ct);
-
-                return $"Device:{deviceId} | Type:{messageType} | Saved as {record.GetType().Name}";
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-                throw;
-            }
-        }
+    public Task<List<TelemetryRecordBase>> GetAsync(int? deviceId = null, string? sensorType = null, CancellationToken ct = default)
+    {
+        return _repository.GetAsync(deviceId, sensorType, ct);
     }
 }

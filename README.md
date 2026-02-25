@@ -9,21 +9,84 @@ Industrial-style telemetry ingestion backend built with:
 
 ## Purpose
 
+Industrial devices send raw hexadecimal telemetry frames. 
 This project receives a hex telemetry frame via HTTP, parses it, and persists it into PostgreSQL.
 
-System flow: Machine -> API -> Parse -> PostgreSQL (Saved)
+System flow: Machine -> API -> Parse -> PostgreSQL
 
  
 ## Architecture
 
-Controller -> TelemetryService -> AppDbContext (EF Core) -> PostgreSQL (Docker Container)
+High Level Flow:
 
-- Controller: The entry point. Receives incoming HTTP requests and routes the raw payload.
-- TelemetryService: The brain. Parses the raw hexadecimal string into a structured data object.
-- AppDbContext (EF Core): The bridge. Translates C# objects into SQL commands (ORM).
-- PostgreSQL (Docker): The vault. Securely persists the processed data in an isolated container.
+Client -> [Middleware] -> Controller -> Services -> Repositories -> EF Core -> PostgreSQL -> (Docker Container)
 
----
+- Middleware: Its main objective is Exception handling.
+- Controller: HTTP entry point. Accepts request DTO and returns proper HTTP status codes.
+- Services: 
+    - TelemetryService: Parses and validates hex frame.
+    - DevicesService: Manages devices (add, list, check existence)
+- Repositories: Abstract database access, separate repositories for devices and telemetry.
+- Entity Framework (EF Core): Translates C# objects into SQL commands (ORM).
+- PostgreSQL (Docker): Stores structured telemetry data in an isolated container.
+
+## Entity Model
+
+This is the blueprint of our data. Entity Framework uses this C# class to automatically design the relational database schema.
+(Think of it as: Class = Table, Property = Column)
+
+This class represents a physical industrial device:
+```csharp
+public class Device
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Location { get; set; } = string.Empty;
+    public string ProtocolType { get; set; } = string.Empty;
+
+    public ICollection<TelemetryRecord> TelemetryRecords { get; set; }
+        = new List<TelemetryRecord>();
+}
+```
+
+And this one has the base properties of a single telemetry event:
+
+```csharp
+public class TelemetryRecordBase
+{
+    public int Id { get; set; }
+    public int DeviceId { get; set; }
+    public DateTime Timestamp { get; set; }
+    public byte[] RawPayload { get; set; } = Array.Empty<byte>();
+    public byte MessageType { get; set; }
+
+    public Device? Device { get; set; }
+}
+```
+Every sensor type has its own DB schema, for example SpeedRecord:
+```csharp
+public class SpeedRecord : TelemetryRecordBase
+{
+    public int Speed { get; set; }
+    public bool Running { get; set; }
+}
+```
+
+EF model has Database-level constraint:
+
+```
+FOREIGN KEY (DeviceId) REFERENCES Devices(Id)
+```
+
+Meaning:
+
+- A telemetry record MUST belong to an existing device.
+- You cannot insert telemetry for a non-registered device.
+- PostgreSQL enforces referential integrity.
+
+This ensures:
+
+Device (1) → (Many) TelemetryRecords
 
 ## Docker & PostgreSQL Setup
 
@@ -57,23 +120,9 @@ Install EF CLI Tool (for running migrations):
 dotnet tool install --global dotnet-ef
 ```
 
-### Entity Model
-This is the blueprint of our data. Entity Framework uses this C# class to automatically design the relational database schema.
 
-```powershell
-public class TelemetryRecord
-{
-    public int Id { get; set; } // Auto increment primary key
-    public byte DeviceId { get; set; }
-    public byte MessageType { get; set; }
-    public string ParsedData { get; set; } = string.Empty;
-    public DateTime Timestamp { get; set; }
-}
-```
-(Think of it as: Class = Table, Property = Column)
-
-## Migration 
-Time to sync our code with the database. These commands generate the SQL instructions and apply them to construct our tables.
+### Migration 
+This is the process of syncing the code with the database. These commands generate the SQL instructions and apply them to construct our tables.
 
 Generate the initial migration:
 
@@ -95,28 +144,59 @@ Start application:
 dotnet run
 ```
 
-Open the Swagger UI to interact with the API::
+Open the Swagger UI to interact with the API:
 ```code
 http://localhost:5000/swagger/index.html
 ```
 
-Send a POST request -> /api/Telemetry
+#### Register a Device:
 
-Example body:
+POST /api/devices
+
 ```json
-"AA0101FFFF"
+{
+  "name": "Pump A",
+  "location": "Factory Floor",
+  "protocolType": "Modbus"
+}
 ```
-After sending the body,
+#### Send Telemetry:
 
-Verify data in database:
+POST /api/telemetry
+
+```json
+{
+  "deviceId": 1,
+  "rawPayload": "020132"
+}
+```
+
+---
+
+#### Query Telemetry:
+
+GET /api/telemetry
+
+Optional filters:
+```
+/api/telemetry?deviceId=1
+/api/telemetry?sensorType=Speed
+```
+
+Returns structured telemetry response DTO (Data transfer object).
+
+### Verify Database:
+
+Connect to container:
+
 ```powershell
 docker exec -it telemetry-db psql -U postgres -d telemetrydb
 ```
-Query the records:
-```powershell
-SELECT * FROM "TelemetryRecords";
+
+List tables:
+
+```
+\dt
 ```
 
-If records are visible, the ingestion pipeline is working correctly.
-
-Tip: Type \dt inside the psql shell to list all tables in your database.
+You should see all the tables. (Devices, TelemetryRecordBase,TemperatureRecords, VibrationRecords and SpeedRecords)

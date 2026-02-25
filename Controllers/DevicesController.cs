@@ -1,7 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using telemetry_ingestion.Data;
 using telemetry_ingestion.Models;
+using telemetry_ingestion.Services;
 
 namespace telemetry_ingestion.Controllers;
 
@@ -9,25 +8,24 @@ namespace telemetry_ingestion.Controllers;
 [Route("api/[controller]")]
 public class DevicesController : ControllerBase
 {
-    private readonly AppDbContext _context;
+    private readonly DevicesService _service;
 
-    public DevicesController(AppDbContext context)
+    public DevicesController(DevicesService service)
     {
-        _context = context;
+        _service = service;
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create(Device device)
+    public async Task<IActionResult> Create(Device device, CancellationToken ct)
     {
-        _context.Devices.Add(device);
-        await _context.SaveChangesAsync();
+        await _service.AddDeviceAsync(device, ct);
         return Ok(device);
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(CancellationToken ct)
     {
-        var devices = await _context.Devices.ToListAsync();
+        var devices = await _service.GetAllDevicesAsync(ct);
         return Ok(devices);
     }
 }
