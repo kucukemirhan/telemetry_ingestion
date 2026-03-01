@@ -19,7 +19,7 @@ System flow: Machine -> API -> Parse -> Service -> Repository -> PostgreSQL
 
 High Level Flow:
 
-Client -> [Middleware] -> Controller -> Services -> Repositories -> EF Core -> PostgreSQL -> (Docker Container)
+Client -> [Middleware] -> Controller -> Services -> Repositories -> EF Core -> PostgreSQL (Docker Container)
 
 - Middleware: Its main objective is Exception handling.
 - Controller: HTTP entry point. Accepts request DTO and returns proper HTTP status codes.
